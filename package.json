@@ -1,0 +1,40 @@
+{
+  "name": "cms-apudsi-news",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "migrate": "node scripts/runMigrations.js",
+    "setup": "node scripts/setupDatabase.js",
+    "update-schema": "node scripts/updateSchema.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "dotenv": "^16.3.1",
+    "mysql2": "^3.6.0",
+    "next": "latest",
+    "next-auth": "^4.23.1",
+    "pg": "^8.11.3",
+    "react": "latest",
+    "react-dom": "latest",
+    "react-quill": "^2.0.0",
+    "tailwindcss": "^3.3.0",
+    "uuid": "^9.0.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/forms": "^0.5.10",
+    "@tailwindcss/typography": "^0.5.16",
+    "@types/node": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "autoprefixer": "latest",
+    "eslint": "latest",
+    "eslint-config-next": "latest",
+    "postcss": "latest",
+    "typescript": "latest"
+  }
+}
