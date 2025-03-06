@@ -1,77 +1,125 @@
-import { getServerSession } from 'next-auth/next';
-import { query } from '@/lib/db';
-import { authOptions } from '@/lib/auth';
+import { cookies } from 'next/headers';
+import { query } from '../../../lib/db';
+import { jwtVerify } from 'jose';
 
-// Get notifications for the current user
-export async function GET(request) {
-  const session = await getServerSession(authOptions);
+// Get auth token and verify user from cookies
+async function getUserFromToken(req) {
+  const cookieStore = cookies();
+  const token = cookieStore.get('auth-token')?.value;
   
-  if (!session) {
-    return Response.json({ error: 'Unauthorized' }, { status: 401 });
+  if (!token) {
+    return null;
   }
   
   try {
-    const url = new URL(request.url);
-    const userId = url.searchParams.get('userId');
+    const secretKey = new TextEncoder().encode(
+      process.env.NEXTAUTH_SECRET || 'your-fallback-secret-key-at-least-32-chars'
+    );
     
-    // Ensure user can only access their own notifications
-    if (userId !== session.user.id.toString() && session.user.role !== 'superuser') {
-      return Response.json({ error: 'You can only access your own notifications' }, { status: 403 });
+    const { payload } = await jwtVerify(token, secretKey);
+    return {
+      id: payload.sub,
+      name: payload.name,
+      email: payload.email,
+      role: payload.role
+    };
+  } catch (error) {
+    console.error('Invalid token:', error);
+    return null;
+  }
+}
+
+// Get notifications for the current user
+export async function GET(request) {
+  try {
+    const user = await getUserFromToken(request);
+    
+    if (!user) {
+      return Response.json({ error: 'Unauthorized' }, { status: 401 });
     }
     
-    const result = await query(`
-      SELECT n.*, a.title as article_title
-      FROM notifications n
-      LEFT JOIN articles a ON n.article_id = a.id
-      WHERE n.user_id = ?
-      ORDER BY n.created_at DESC
-      LIMIT 20
-    `, [userId]);
+    const userId = user.id;
     
-    return Response.json({ notifications: result.rows });
+    // Parse query parameters
+    const url = new URL(request.url);
+    const limit = parseInt(url.searchParams.get('limit') || '10');
+    const offset = parseInt(url.searchParams.get('offset') || '0');
+    const unreadOnly = url.searchParams.get('unread') === 'true';
+    
+    // SQL query with parameters
+    const sqlQuery = `
+      SELECT id, message, link, is_read, created_at, type
+      FROM notifications
+      WHERE user_id = ?
+      ${unreadOnly ? 'AND is_read = 0' : ''}
+      ORDER BY created_at DESC
+      LIMIT ? OFFSET ?
+    `;
+    
+    // Get notifications
+    const results = await query(sqlQuery, [userId, limit, offset]);
+    
+    // Count total notifications and unread for pagination
+    const countResult = await query(
+      'SELECT COUNT(*) as total, SUM(CASE WHEN is_read = 0 THEN 1 ELSE 0 END) as unread FROM notifications WHERE user_id = ?',
+      [userId]
+    );
+    
+    const total = countResult.rows[0]?.total || 0;
+    const unreadCount = countResult.rows[0]?.unread || 0;
+    
+    return Response.json({
+      notifications: results.rows,
+      pagination: {
+        total,
+        unreadCount,
+        limit,
+        offset
+      }
+    });
   } catch (error) {
     console.error('Error fetching notifications:', error);
     return Response.json({ error: 'Failed to fetch notifications' }, { status: 500 });
   }
 }
 
-// Mark notification as read
+// Mark notifications as read
 export async function PUT(request) {
-  const session = await getServerSession(authOptions);
-  
-  if (!session) {
-    return Response.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-  
   try {
-    const { id } = await request.json();
+    const user = await getUserFromToken(request);
     
-    if (!id) {
-      return Response.json({ error: 'Notification ID is required' }, { status: 400 });
+    if (!user) {
+      return Response.json({ error: 'Unauthorized' }, { status: 401 });
     }
     
-    // Ensure the notification belongs to the user
-    const notificationCheck = await query(
-      'SELECT user_id FROM notifications WHERE id = ?',
-      [id]
-    );
+    const { ids, all = false } = await request.json();
     
-    if (notificationCheck.rows.length === 0) {
-      return Response.json({ error: 'Notification not found' }, { status: 404 });
+    if (all) {
+      // Mark all notifications as read
+      await query(
+        'UPDATE notifications SET is_read = 1 WHERE user_id = ?',
+        [user.id]
+      );
+      
+      return Response.json({ success: true });
     }
     
-    if (notificationCheck.rows[0].user_id !== session.user.id) {
-      return Response.json({ error: 'Unauthorized' }, { status: 403 });
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return Response.json({ error: 'No notification IDs provided' }, { status: 400 });
     }
     
+    // Build placeholders for SQL query
+    const placeholders = ids.map(() => '?').join(',');
+    
+    // Mark specified notifications as read
     await query(
-      'UPDATE notifications SET is_read = TRUE WHERE id = ?',
-      [id]
+      `UPDATE notifications SET is_read = 1 WHERE id IN (${placeholders}) AND user_id = ?`,
+      [...ids, user.id]
     );
     
     return Response.json({ success: true });
   } catch (error) {
-    console.error('Error updating notification:', error);
-    return Response.json({ error: 'Failed to update notification' }, { status: 500 });
+    console.error('Error updating notifications:', error);
+    return Response.json({ error: 'Failed to update notifications' }, { status: 500 });
   }
 }

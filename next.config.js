@@ -44,4 +44,5 @@ const nextConfig = {
   }
 };
 
+// Changed from CommonJS to ES module export syntax
 export default nextConfig;

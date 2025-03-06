@@ -1,8 +1,8 @@
 {
-  "name": "Apudsi News Management Centre",
+  "name": "cms-apudsi-news",
   "version": "0.1.0",
   "private": true,
-  "type": "commonjs",
+  "type": "module",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -12,16 +12,19 @@
     "setup": "node scripts/setupDatabase.js",
     "update-schema": "node scripts/updateSchema.js",
     "update-workflow": "node scripts/updateWorkflowSchema.js",
+    "setup-articles": "node scripts/setupArticlesTable.js",
     "update-roles": "node scripts/updateRoles.js",
     "create-media-table": "node scripts/createMediaTable.js",
-    "init-all": "npm run setup && npm run update-workflow && npm run update-roles && npm run create-media-table"
+    "create-notifications-table": "node scripts/createNotificationsTable.js",
+    "init-all": "npm run setup && npm run setup-articles && npm run update-roles && npm run create-media-table && npm run create-notifications-table"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
     "dotenv": "^16.3.1",
+    "jsonwebtoken": "^9.0.0",
     "mysql2": "^3.6.0",
     "next": "latest",
-    "next-auth": "^4.23.1",
+    "next-auth": "^4.24.11",
     "pg": "^8.11.3",
     "react": "latest",
     "react-dom": "latest",

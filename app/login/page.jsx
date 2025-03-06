@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation';
 import { getServerSession } from 'next-auth/next';
-import { authOptions } from '../lib/auth';
-import LoginForm from '@/components/LoginForm';
+import { authOptions } from '../../lib/auth';  // Use relative path instead of alias
+import LoginForm from '../../components/LoginForm';  // Changed to relative path
 import Link from 'next/link';
 
 export const metadata = {
