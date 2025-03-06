@@ -1,130 +1,155 @@
 import { getServerSession } from 'next-auth/next';
+import { NextResponse } from 'next/server';
 import { writeFile, mkdir } from 'fs/promises';
-import { join, dirname } from 'path';
+import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
+import sharp from 'sharp';
 import { query } from '@/lib/db';
 import { authOptions } from '@/lib/auth';
-import sharp from 'sharp';
 
-// Configure upload directory
-const uploadDir = join(process.cwd(), 'public', 'uploads');
-
-// Ensure upload directory exists
-const ensureUploadDir = async () => {
+// Create uploads directory if it doesn't exist
+async function ensureUploadsDir() {
   try {
-    await mkdir(uploadDir, { recursive: true });
+    const uploadsDir = path.join(process.cwd(), 'public', 'uploads');
+    await mkdir(uploadsDir, { recursive: true });
+    return uploadsDir;
   } catch (error) {
-    console.error('Failed to create upload directory:', error);
+    console.error('Failed to create uploads directory', error);
+    throw error;
   }
-};
+}
+
+// Process and optimize image
+async function processImage(buffer, filename, mimeType) {
+  try {
+    // Get image dimensions
+    const metadata = await sharp(buffer).metadata();
+    
+    // Optimize image based on type
+    let processedBuffer;
+    let optimizedMimeType = mimeType;
+    
+    switch (mimeType) {
+      case 'image/jpeg':
+        processedBuffer = await sharp(buffer)
+          .jpeg({ quality: 85, progressive: true })
+          .toBuffer();
+        break;
+      case 'image/png':
+        processedBuffer = await sharp(buffer)
+          .png({ compressionLevel: 8, progressive: true })
+          .toBuffer();
+        break;
+      case 'image/webp':
+        processedBuffer = await sharp(buffer)
+          .webp({ quality: 85 })
+          .toBuffer();
+        break;
+      default:
+        // For unsupported types, convert to webp
+        processedBuffer = await sharp(buffer)
+          .webp({ quality: 85 })
+          .toBuffer();
+        optimizedMimeType = 'image/webp';
+        filename = filename.split('.').slice(0, -1).join('.') + '.webp';
+    }
+    
+    return {
+      buffer: processedBuffer,
+      filename,
+      mimeType: optimizedMimeType,
+      width: metadata.width,
+      height: metadata.height
+    };
+  } catch (error) {
+    console.error('Image processing error:', error);
+    throw error;
+  }
+}
 
 export async function POST(request) {
+  // Verify authentication
   const session = await getServerSession(authOptions);
-  
   if (!session) {
-    return Response.json({ error: 'Unauthorized' }, { status: 401 });
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
   
   try {
-    // Parse the multipart form data
+    // Parse the form data
     const formData = await request.formData();
-    const files = formData.getAll('files');
+    const file = formData.get('file');
     
-    if (!files || files.length === 0) {
-      return Response.json({ error: 'No files provided' }, { status: 400 });
+    if (!file) {
+      return NextResponse.json({ error: 'No file uploaded' }, { status: 400 });
     }
     
-    // Ensure upload directory exists
-    await ensureUploadDir();
-    
-    const uploadedFiles = [];
-    
-    // Process each file
-    for (const file of files) {
-      // Generate a unique filename to prevent overwriting
-      const uniqueId = uuidv4();
-      const originalName = file.name;
-      const fileExtension = originalName.split('.').pop();
-      const uniqueFilename = `${uniqueId}.${fileExtension}`;
-      const relativePath = `/uploads/${uniqueFilename}`;
-      const fullPath = join(process.cwd(), 'public', relativePath);
-      
-      // Get file buffer
-      const buffer = Buffer.from(await file.arrayBuffer());
-      
-      // Get file info
-      const filesize = buffer.length;
-      const filetype = file.type;
-      
-      // For images, get dimensions and optimize
-      let width = null;
-      let height = null;
-      
-      if (filetype.startsWith('image/')) {
-        try {
-          // Optimize image and get metadata
-          const image = sharp(buffer);
-          const metadata = await image.metadata();
-          width = metadata.width;
-          height = metadata.height;
-          
-          // Save optimized image
-          if (filetype === 'image/jpeg' || filetype === 'image/jpg') {
-            await image.jpeg({ quality: 85 }).toFile(fullPath);
-          } else if (filetype === 'image/png') {
-            await image.png({ compressionLevel: 8 }).toFile(fullPath);
-          } else if (filetype === 'image/webp') {
-            await image.webp({ quality: 85 }).toFile(fullPath);
-          } else if (filetype === 'image/gif') {
-            // Save GIF as is (sharp doesn't optimize GIFs well)
-            await writeFile(fullPath, buffer);
-          } else {
-            // Unknown image type, save as is
-            await writeFile(fullPath, buffer);
-          }
-        } catch (error) {
-          console.error('Error processing image:', error);
-          // If image processing fails, save original file
-          await writeFile(fullPath, buffer);
-        }
-      } else {
-        // For non-image files, save as is
-        await writeFile(fullPath, buffer);
-      }
-      
-      // Save file record in database
-      const result = await query(
-        `INSERT INTO media (
-          user_id, filename, filepath, filetype, filesize, width, height
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [
-          session.user.id,
-          originalName,
-          relativePath,
-          filetype,
-          filesize,
-          width,
-          height
-        ]
-      );
-      
-      uploadedFiles.push({
-        id: result.insertId,
-        filename: originalName,
-        filepath: relativePath,
-        filetype: filetype,
-        filesize: filesize,
-        width: width,
-        height: height
-      });
+    // Validate file type
+    const validTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+    if (!validTypes.includes(file.type)) {
+      return NextResponse.json({ error: 'Invalid file type' }, { status: 400 });
     }
     
-    return Response.json({ 
+    // Validate file size (max 5MB)
+    if (file.size > 5 * 1024 * 1024) {
+      return NextResponse.json({ error: 'File too large (max 5MB)' }, { status: 400 });
+    }
+    
+    // Generate a unique filename
+    const buffer = Buffer.from(await file.arrayBuffer());
+    const uniqueFilename = `${uuidv4()}-${file.name.replace(/\s+/g, '-').toLowerCase()}`;
+    
+    // Process and optimize the image
+    const { 
+      buffer: processedBuffer, 
+      filename: optimizedFilename,
+      mimeType,
+      width,
+      height
+    } = await processImage(buffer, uniqueFilename, file.type);
+    
+    // Ensure uploads directory exists
+    const uploadsDir = await ensureUploadsDir();
+    
+    // Save the file
+    const filePath = path.join(uploadsDir, optimizedFilename);
+    await writeFile(filePath, processedBuffer);
+    
+    // Save to the media library database
+    const publicPath = `/uploads/${optimizedFilename}`;
+    const result = await query(
+      `INSERT INTO media_library (
+        user_id, 
+        filename, 
+        original_filename, 
+        file_size, 
+        mime_type, 
+        path, 
+        width, 
+        height
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        session.user.id,
+        optimizedFilename,
+        file.name,
+        processedBuffer.length,
+        mimeType,
+        publicPath,
+        width,
+        height
+      ]
+    );
+    
+    const mediaId = result.rows.insertId;
+    
+    return NextResponse.json({ 
       success: true, 
-      files: uploadedFiles 
-    }, { status: 201 });
+      filePath: publicPath,
+      mediaId,
+      width,
+      height,
+    });
   } catch (error) {
     console.error('Upload error:', error);
-    return Response.json({ error: 'Failed to upload files' }, { status: 500 });
+    return NextResponse.json({ error: 'Failed to upload file' }, { status: 500 });
   }
 }

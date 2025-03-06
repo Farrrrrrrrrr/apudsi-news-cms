@@ -1,31 +1,28 @@
 import { getServerSession } from 'next-auth/next';
 import { redirect } from 'next/navigation';
+import Link from 'next/link';
 import { authOptions } from '@/lib/auth';
 import AdminLayout from '@/components/AdminLayout';
 
 export const metadata = {
   title: 'API Documentation - APUDSI News CMS',
-  description: 'API documentation for APUDSI News CMS',
+  description: 'API documentation for the APUDSI News CMS',
 };
 
 export default async function ApiDocsPage() {
   const session = await getServerSession(authOptions);
   
-  if (!session) {
-    redirect('/login');
-  }
-  
-  // Only superadmin can access this page
-  if (session.user.role !== 'superadmin') {
+  // Only allow superusers to access API documentation
+  if (!session || session.user.role !== 'superuser') {
     redirect('/admin');
   }
   
-  // Get the base URL for examples
-  const baseUrl = process.env.NEXTAUTH_URL || 'https://yourdomain.com';
-
+  // Get base URL for examples
+  const baseUrl = process.env.NEXTAUTH_URL || 'https://your-domain.com';
+  
   return (
     <AdminLayout user={session.user}>
-      <div className="bg-white shadow rounded-lg overflow-hidden">
+      <div className="bg-white rounded-lg shadow-lg overflow-hidden">
         <div className="px-6 py-4 border-b border-gray-200">
           <h1 className="text-2xl font-bold text-[#191970]">API Documentation</h1>
           <p className="mt-1 text-sm text-gray-500">

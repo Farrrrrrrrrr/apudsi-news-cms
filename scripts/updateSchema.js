@@ -1,10 +1,11 @@
 import mysql from 'mysql2/promise';
 import dotenv from 'dotenv';
+import bcrypt from 'bcryptjs';
 
 // Load environment variables
 dotenv.config();
 
-// Simplified connection creation for update
+// Create database connection
 const createConnection = async () => {
   const config = {
     host: process.env.MYSQL_HOST,
@@ -25,142 +26,138 @@ const updateSchema = async () => {
   try {
     connection = await createConnection();
     console.log('✅ Connected to database successfully');
-    
-    // 1. Expand user roles
-    console.log('Updating users with new roles...');
-    
-    // Add roles enum check if needed
+
+    // Update users table to include all required roles
+    console.log('Updating user roles...');
     await connection.execute(`
       ALTER TABLE users 
-      MODIFY COLUMN role ENUM('writer', 'editor', 'publisher', 'superuser') NOT NULL DEFAULT 'writer'
+      MODIFY COLUMN role ENUM('superuser', 'writer', 'editor', 'publisher') NOT NULL DEFAULT 'writer'
     `);
-    
-    // Update existing 'editor' users to 'writer'
-    await connection.execute(`
-      UPDATE users 
-      SET role = 'writer' 
-      WHERE role = 'editor' AND role != 'superuser'
-    `);
-    
     console.log('✅ User roles updated');
-    
-    // 2. Add workflow fields to articles table
+
+    // Add workflow-related fields to articles table
     console.log('Adding workflow fields to articles table...');
     
-    // Check for each column first to avoid errors if already exists
-    const columns = await connection.execute(`
+    // Check for existing columns to prevent errors
+    const [columns] = await connection.execute(`
       SELECT COLUMN_NAME 
       FROM INFORMATION_SCHEMA.COLUMNS 
       WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'articles'
     `, [process.env.MYSQL_DATABASE]);
     
-    const existingColumns = columns[0].map(column => column.COLUMN_NAME.toLowerCase());
+    const columnNames = columns.map(col => col.COLUMN_NAME);
     
-    // Add workflow status if it doesn't exist
-    if (!existingColumns.includes('workflow_status')) {
+    // Add workflow_status if it doesn't exist
+    if (!columnNames.includes('workflow_status')) {
       await connection.execute(`
         ALTER TABLE articles 
-        ADD COLUMN workflow_status ENUM('draft', 'in_review', 'approved', 'rejected', 'published') 
+        ADD COLUMN workflow_status ENUM('draft', 'in_review', 'rejected', 'approved', 'published') 
         DEFAULT 'draft' AFTER status
       `);
-      
-      // Set initial workflow_status to match status for existing articles
-      await connection.execute(`
-        UPDATE articles 
-        SET workflow_status = status 
-        WHERE workflow_status IS NULL
-      `);
+      console.log('✅ Added workflow_status column');
     }
     
-    // Add submitted_at timestamp
-    if (!existingColumns.includes('submitted_at')) {
+    // Add reviewer_id if it doesn't exist
+    if (!columnNames.includes('reviewer_id')) {
       await connection.execute(`
         ALTER TABLE articles 
-        ADD COLUMN submitted_at DATETIME NULL AFTER workflow_status
-      `);
-    }
-    
-    // Add reviewer_id
-    if (!existingColumns.includes('reviewer_id')) {
-      await connection.execute(`
-        ALTER TABLE articles 
-        ADD COLUMN reviewer_id INT NULL AFTER submitted_at,
+        ADD COLUMN reviewer_id INT,
         ADD CONSTRAINT fk_reviewer FOREIGN KEY (reviewer_id) REFERENCES users(id)
       `);
+      console.log('✅ Added reviewer_id column');
     }
     
-    // Add reviewed_at timestamp
-    if (!existingColumns.includes('reviewed_at')) {
+    // Add publisher_id if it doesn't exist
+    if (!columnNames.includes('publisher_id')) {
       await connection.execute(`
         ALTER TABLE articles 
-        ADD COLUMN reviewed_at DATETIME NULL AFTER reviewer_id
-      `);
-    }
-    
-    // Add publisher_id
-    if (!existingColumns.includes('publisher_id')) {
-      await connection.execute(`
-        ALTER TABLE articles 
-        ADD COLUMN publisher_id INT NULL AFTER reviewed_at,
+        ADD COLUMN publisher_id INT,
         ADD CONSTRAINT fk_publisher FOREIGN KEY (publisher_id) REFERENCES users(id)
       `);
+      console.log('✅ Added publisher_id column');
     }
     
-    // Add published_at timestamp
-    if (!existingColumns.includes('published_at')) {
+    // Add workflow timestamp fields
+    const timestampColumns = [
+      { name: 'submitted_at', message: 'submission' },
+      { name: 'reviewed_at', message: 'review' },
+      { name: 'published_at', message: 'publication' }
+    ];
+    
+    for (const col of timestampColumns) {
+      if (!columnNames.includes(col.name)) {
+        await connection.execute(`
+          ALTER TABLE articles 
+          ADD COLUMN ${col.name} DATETIME NULL
+        `);
+        console.log(`✅ Added ${col.name} timestamp for ${col.message} tracking`);
+      }
+    }
+    
+    // Add review_feedback column if it doesn't exist
+    if (!columnNames.includes('review_feedback')) {
       await connection.execute(`
         ALTER TABLE articles 
-        ADD COLUMN published_at DATETIME NULL AFTER publisher_id
+        ADD COLUMN review_feedback TEXT NULL
       `);
+      console.log('✅ Added review_feedback column');
     }
-    
-    // Add rejection reason
-    if (!existingColumns.includes('rejection_reason')) {
-      await connection.execute(`
-        ALTER TABLE articles 
-        ADD COLUMN rejection_reason TEXT NULL AFTER published_at
-      `);
-    }
-    
-    console.log('✅ Workflow fields added to articles table');
-    
-    // 3. Create notifications table for workflow communication
-    console.log('Creating notifications table...');
-    
+
+    // Create notifications table if it doesn't exist
     await connection.execute(`
       CREATE TABLE IF NOT EXISTS notifications (
         id INT AUTO_INCREMENT PRIMARY KEY,
         user_id INT NOT NULL,
         message TEXT NOT NULL,
-        article_id INT NULL,
+        article_id INT,
         is_read BOOLEAN DEFAULT FALSE,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (user_id) REFERENCES users(id),
         FOREIGN KEY (article_id) REFERENCES articles(id)
       )
     `);
-    
-    console.log('✅ Notifications table created');
-    
-    // Update superuser with all roles
+    console.log('✅ Created notifications table');
+
+    // Create media library table if it doesn't exist
     await connection.execute(`
-      INSERT INTO users (name, email, password, role)
-      SELECT 'Editor User', 'editor@example.com', 
-             (SELECT password FROM users WHERE email = 'admin@gmail.com' LIMIT 1),
-             'editor'
-      FROM dual
-      WHERE NOT EXISTS (SELECT 1 FROM users WHERE email = 'editor@example.com')
+      CREATE TABLE IF NOT EXISTS media_library (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL,
+        filename VARCHAR(255) NOT NULL,
+        original_filename VARCHAR(255) NOT NULL,
+        file_size INT NOT NULL,
+        mime_type VARCHAR(100) NOT NULL,
+        path VARCHAR(255) NOT NULL,
+        width INT,
+        height INT,
+        alt_text VARCHAR(255),
+        caption TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users(id)
+      )
     `);
+    console.log('✅ Created media_library table');
+
+    // Create example users for each role if they don't exist
+    console.log('Creating example users for each role...');
+    const roles = ['writer', 'editor', 'publisher'];
+    const hashedPassword = await bcrypt.hash('password123', 10);
     
-    await connection.execute(`
-      INSERT INTO users (name, email, password, role)
-      SELECT 'Publisher User', 'publisher@example.com', 
-             (SELECT password FROM users WHERE email = 'admin@gmail.com' LIMIT 1),
-             'publisher'
-      FROM dual
-      WHERE NOT EXISTS (SELECT 1 FROM users WHERE email = 'publisher@example.com')
-    `);
-    
+    for (const role of roles) {
+      const [userExists] = await connection.execute(
+        'SELECT COUNT(*) as count FROM users WHERE email = ?',
+        [`${role}@example.com`]
+      );
+      
+      if (userExists[0].count === 0) {
+        await connection.execute(
+          'INSERT INTO users (email, password, name, role) VALUES (?, ?, ?, ?)',
+          [`${role}@example.com`, hashedPassword, `Example ${role.charAt(0).toUpperCase() + role.slice(1)}`, role]
+        );
+        console.log(`✅ Created example ${role} user`);
+      }
+    }
+
     console.log('🎉 Database schema update completed successfully!');
   } catch (error) {
     console.error('❌ Database schema update failed:', error);
@@ -170,4 +167,5 @@ const updateSchema = async () => {
   }
 };
 
+// Run the schema update
 updateSchema().then(() => process.exit(0));
