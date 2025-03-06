@@ -1,6 +1,8 @@
 import { query } from '@/lib/db';
 import { NextResponse } from 'next/server';
 
+export const dynamic = 'force-dynamic'; // Ensure route is not cached
+
 // Rate limiting configuration
 const RATE_LIMIT = 60; // requests per minute
 const RATE_LIMIT_WINDOW = 60 * 1000; // 1 minute in milliseconds
@@ -37,84 +39,66 @@ export async function GET(request) {
   if (!rateLimit(ip)) {
     return NextResponse.json(
       { error: 'Too many requests. Please try again later.' },
-      { status: 429, headers: { 'Retry-After': '60' } }
+      { status: 429, headers: { 'Retry-After': '60' }
     );
   }
   
   try {
-    // Parse search parameters
-    const { searchParams } = new URL(request.url);
-    const page = parseInt(searchParams.get('page') || '1');
-    const limit = parseInt(searchParams.get('limit') || '10');
-    const search = searchParams.get('search') || '';
+    // Parse URL params
+    const url = new URL(request.url);
+    const page = parseInt(url.searchParams.get('page') || '1');
+    const limit = Math.min(parseInt(url.searchParams.get('limit') || '10'), 50); // Max 50 items per page
+    const search = url.searchParams.get('search');
     
-    // Validate parameters
-    const validatedLimit = Math.min(Math.max(1, limit), 50); // Between 1 and 50
-    const validatedPage = Math.max(1, page); // At least 1
-    const offset = (validatedPage - 1) * validatedLimit;
+    // Calculate offset
+    const offset = (page - 1) * limit;
     
     // Build search condition
-    const searchCondition = search
-      ? `AND (a.title LIKE ? OR a.content LIKE ?)`
-      : '';
-    const searchParams = search
-      ? [`%${search}%`, `%${search}%`]
-      : [];
+    let searchCondition = '';
+    let searchParams = [];
+    
+    if (search) {
+      searchCondition = 'AND (a.title LIKE ? OR a.content LIKE ?)';
+      searchParams = [`%${search}%`, `%${search}%`];
+    }
     
     // Get total count for pagination
-    const countQuery = `
-      SELECT COUNT(*) as total
-      FROM articles a
-      JOIN users u ON a.author_id = u.id
+    const countResult = await query(`
+      SELECT COUNT(*) as total 
+      FROM articles a 
       WHERE a.status = 'published' ${searchCondition}
-    `;
+    `, searchParams);
     
-    const countResult = await query(countQuery, searchParams);
-    const total = countResult.rows[0].total;
+    const total = parseInt(countResult.rows[0].total);
+    const totalPages = Math.ceil(total / limit);
     
-    // Fetch articles with author name
-    const articlesQuery = `
-      SELECT 
-        a.id, 
-        a.title, 
-        a.image_path, 
-        SUBSTRING(a.content, 1, 200) AS excerpt,
-        a.created_at, 
-        a.updated_at,
-        u.name AS author_name
-      FROM articles a
-      JOIN users u ON a.author_id = u.id
+    // Get articles
+    const articlesResult = await query(`
+      SELECT a.id, a.title, a.image_path, 
+             SUBSTRING(a.content, 1, 200) as excerpt, 
+             a.created_at, a.updated_at, 
+             u.name as author_name 
+      FROM articles a 
+      JOIN users u ON a.author_id = u.id 
       WHERE a.status = 'published' ${searchCondition}
       ORDER BY a.created_at DESC
       LIMIT ? OFFSET ?
-    `;
+    `, [...searchParams, limit, offset]);
     
-    const articlesResult = await query(
-      articlesQuery,
-      [...searchParams, validatedLimit, offset]
-    );
-    
-    // Process articles to ensure HTML is stripped from excerpt
+    // Process articles for API response
     const articles = articlesResult.rows.map(article => ({
       ...article,
-      // Strip HTML tags from excerpt
-      excerpt: article.excerpt.replace(/<[^>]*>/g, '').trim() + '...',
+      // Clean excerpt by removing HTML tags
+      excerpt: article.excerpt.replace(/<[^>]*>/g, '').trim() + '...'
     }));
-    
-    // Calculate pagination info
-    const totalPages = Math.ceil(total / validatedLimit);
-    const hasNextPage = validatedPage < totalPages;
-    const hasPrevPage = validatedPage > 1;
     
     return NextResponse.json({
       articles,
       pagination: {
-        page: validatedPage,
-        limit: validatedLimit,
         total,
-        totalPages,
-        hasNextPage,
-        hasPrevPage,
+        pages: totalPages,
+        page,
+        limit
       }
     });
   } catch (error) {

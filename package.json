@@ -10,7 +10,11 @@
     "lint": "next lint",
     "migrate": "node scripts/runMigrations.js",
     "setup": "node scripts/setupDatabase.js",
-    "update-schema": "node scripts/updateSchema.js"
+    "update-schema": "node scripts/updateSchema.js",
+    "update-workflow": "node scripts/updateWorkflowSchema.js",
+    "update-roles": "node scripts/updateRoles.js",
+    "create-media-table": "node scripts/createMediaTable.js",
+    "init-all": "npm run setup && npm run update-workflow && npm run update-roles && npm run create-media-table"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
@@ -22,6 +26,7 @@
     "react": "latest",
     "react-dom": "latest",
     "react-quill": "^2.0.0",
+    "sharp": "^0.33.1",
     "tailwindcss": "^3.3.0",
     "uuid": "^9.0.0"
   },

@@ -6,13 +6,13 @@ import UserForm from '@/components/UserForm';
 
 export const metadata = {
   title: 'Create User - APUDSI News CMS',
-  description: 'Create a new system user',
+  description: 'Create a new user account',
 };
 
 export default async function CreateUserPage() {
   const session = await getServerSession(authOptions);
   
-  // Only superusers can create new users
+  // Only superuser can create users
   if (!session || session.user.role !== 'superuser') {
     redirect('/admin');
   }
@@ -22,7 +22,7 @@ export default async function CreateUserPage() {
       <div className="mb-6">
         <h1 className="text-2xl font-semibold text-[#191970]">Create New User</h1>
         <p className="text-sm text-gray-600 mt-1">
-          Add a new user to the system
+          Add a new user account to the system
         </p>
       </div>
       

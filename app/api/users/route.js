@@ -1,14 +1,16 @@
-import { query, insert } from '@/lib/db';
+import { query } from '@/lib/db';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/lib/auth';
 import bcrypt from 'bcryptjs';
+import { ROLE_HIERARCHY } from '@/lib/roles';
+import { checkPermission } from '@/lib/middleware/permissions';
 
-// Get users - only accessible by superusers
+// Get all users (superuser only)
 export async function GET() {
-  const session = await getServerSession(authOptions);
+  const permissionCheck = await checkPermission('manageUsers');
   
-  if (!session || session.user.role !== 'superuser') {
-    return Response.json({ error: 'Unauthorized' }, { status: 401 });
+  if (!permissionCheck.allowed) {
+    return Response.json({ error: permissionCheck.error }, { status: permissionCheck.status });
   }
   
   try {
@@ -25,22 +27,28 @@ export async function GET() {
   }
 }
 
-// Create user - only accessible by superusers
+// Create a new user
 export async function POST(request) {
-  const session = await getServerSession(authOptions);
+  const permissionCheck = await checkPermission('manageUsers');
   
-  if (!session || session.user.role !== 'superuser') {
-    return Response.json({ error: 'Unauthorized' }, { status: 401 });
+  if (!permissionCheck.allowed) {
+    return Response.json({ error: permissionCheck.error }, { status: permissionCheck.status });
   }
   
   try {
     const { name, email, password, role } = await request.json();
     
+    // Validate required fields
     if (!email || !password) {
       return Response.json({ error: 'Email and password are required' }, { status: 400 });
     }
-
-    // Check if user already exists
+    
+    // Validate role
+    if (!role || !ROLE_HIERARCHY.includes(role)) {
+      return Response.json({ error: 'Invalid role' }, { status: 400 });
+    }
+    
+    // Check if email is already used
     const existingUser = await query('SELECT id FROM users WHERE email = ?', [email]);
     if (existingUser.rows.length > 0) {
       return Response.json({ error: 'Email already in use' }, { status: 400 });
@@ -49,16 +57,13 @@ export async function POST(request) {
     // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
     
-    // Insert new user
-    const user = await insert('users', {
-      name: name || null,
-      email,
-      password: hashedPassword,
-      role: role || 'editor'
-    });
+    // Insert user
+    const result = await query(
+      'INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?) RETURNING id, name, email, role',
+      [name || null, email, hashedPassword, role]
+    );
     
-    const { password: _, ...userWithoutPassword } = user;
-    return Response.json({ user: userWithoutPassword }, { status: 201 });
+    return Response.json({ user: result.rows[0] }, { status: 201 });
   } catch (error) {
     console.error('Error creating user:', error);
     return Response.json({ error: 'Failed to create user' }, { status: 500 });

@@ -2,13 +2,13 @@ import { getServerSession } from 'next-auth/next';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { authOptions } from '@/lib/auth';
-import AdminLayout from '@/components/AdminLayout';
 import { query } from '@/lib/db';
+import AdminLayout from '@/components/AdminLayout';
 import Pagination from '@/components/Pagination';
 
 export const metadata = {
   title: 'Articles - APUDSI News CMS',
-  description: 'Manage news articles',
+  description: 'Manage articles in the content management system',
 };
 
 export default async function ArticlesPage({ searchParams }) {
@@ -17,39 +17,62 @@ export default async function ArticlesPage({ searchParams }) {
   if (!session) {
     redirect('/login');
   }
-
-  // Pagination
-  const page = parseInt(searchParams.page) || 1;
-  const itemsPerPage = 10;
-  const offset = (page - 1) * itemsPerPage;
-
-  // Filtering
-  const statusFilter = searchParams.status ? `AND a.status = '${searchParams.status}'` : '';
-  const searchFilter = searchParams.search ? `AND (a.title ILIKE '%${searchParams.search}%' OR a.content ILIKE '%${searchParams.search}%')` : '';
-
-  // Only superusers can see all articles; others see only their own
-  const authorFilter = session.user.role !== 'superuser' ? `AND a.author_id = ${session.user.id}` : '';
-
-  // Get articles count for pagination
-  const countQuery = `
-    SELECT COUNT(*) 
-    FROM articles a 
-    WHERE 1=1 ${authorFilter} ${statusFilter} ${searchFilter}
-  `;
-  const countResult = await query(countQuery);
-  const totalItems = parseInt(countResult.rows[0].count);
-  const totalPages = Math.ceil(totalItems / itemsPerPage);
+  
+  // Handle pagination and filtering
+  const page = parseInt(searchParams?.page || '1', 10);
+  const limit = 10;
+  const offset = (page - 1) * limit;
+  
+  // Apply filters
+  const status = searchParams?.status;
+  const searchTerm = searchParams?.search;
+  
+  // Build query conditions
+  let conditions = [];
+  let queryParams = [];
+  
+  // Filter by status if provided
+  if (status) {
+    conditions.push("a.status = ?");
+    queryParams.push(status);
+  }
+  
+  // Filter by search term if provided
+  if (searchTerm) {
+    conditions.push("(a.title LIKE ? OR a.content LIKE ?)");
+    queryParams.push(`%${searchTerm}%`, `%${searchTerm}%`);
+  }
+  
+  // For non-superusers, only show their own articles
+  if (session.user.role !== 'superuser') {
+    conditions.push("a.author_id = ?");
+    queryParams.push(session.user.id);
+  }
+  
+  // Construct the WHERE clause
+  const whereClause = conditions.length > 0 
+    ? `WHERE ${conditions.join(" AND ")}`
+    : "";
+  
+  // Get total articles count for pagination
+  const countResult = await query(`
+    SELECT COUNT(*) AS total
+    FROM articles a
+    ${whereClause}
+  `, queryParams);
+  
+  const totalArticles = parseInt(countResult.rows[0].total, 10);
+  const totalPages = Math.ceil(totalArticles / limit);
 
   // Get articles
-  const articlesQuery = `
+  const articlesResult = await query(`
     SELECT a.*, u.name as author_name 
     FROM articles a 
     JOIN users u ON a.author_id = u.id 
-    WHERE 1=1 ${authorFilter} ${statusFilter} ${searchFilter}
+    ${whereClause}
     ORDER BY a.created_at DESC
-    LIMIT ${itemsPerPage} OFFSET ${offset}
-  `;
-  const articlesResult = await query(articlesQuery);
+    LIMIT ? OFFSET ?
+  `, [...queryParams, limit, offset]);
 
   return (
     <AdminLayout user={session.user}>

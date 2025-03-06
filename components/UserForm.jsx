@@ -2,17 +2,23 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { ROLE_HIERARCHY, ROLE_DESCRIPTIONS } from '@/lib/roles';
 
-export default function UserForm({ user = null }) {
+export default function UserForm({ user = null, currentUserRole = 'superuser' }) {
   const router = useRouter();
   const [name, setName] = useState(user?.name || '');
   const [email, setEmail] = useState(user?.email || '');
   const [password, setPassword] = useState('');
-  const [role, setRole] = useState(user?.role || 'editor');
+  const [role, setRole] = useState(user?.role || 'writer');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
   const isEditing = !!user;
+  
+  // Only superusers can assign any role
+  const availableRoles = currentUserRole === 'superuser'
+    ? ROLE_HIERARCHY
+    : ['writer']; // Default for non-superusers creating users
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -38,19 +44,19 @@ export default function UserForm({ user = null }) {
 
       const method = isEditing ? 'PUT' : 'POST';
       
-      const userData = {
+      const payload = {
         name,
         email,
         role,
-        ...(password ? { password } : {})
+        ...(password && { password }),
       };
-
+      
       const response = await fetch(apiUrl, {
         method,
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(userData),
+        body: JSON.stringify(payload),
       });
 
       const data = await response.json();
@@ -75,60 +81,68 @@ export default function UserForm({ user = null }) {
         </div>
       )}
 
-      <div>
-        <label htmlFor="name" className="block text-sm font-medium text-gray-700">
-          Name
-        </label>
-        <input
-          id="name"
-          type="text"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-[#191970] focus:border-[#191970]"
-        />
-      </div>
+      <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
+        <div>
+          <label htmlFor="name" className="block text-sm font-medium text-gray-700">
+            Full Name
+          </label>
+          <input
+            id="name"
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-[#191970] focus:border-[#191970]"
+            placeholder="John Doe"
+          />
+        </div>
 
-      <div>
-        <label htmlFor="email" className="block text-sm font-medium text-gray-700">
-          Email Address
-        </label>
-        <input
-          id="email"
-          type="email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          required
-          className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-[#191970] focus:border-[#191970]"
-        />
-      </div>
+        <div>
+          <label htmlFor="email" className="block text-sm font-medium text-gray-700">
+            Email Address
+          </label>
+          <input
+            id="email"
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-[#191970] focus:border-[#191970]"
+            required
+            placeholder="user@example.com"
+          />
+        </div>
 
-      <div>
-        <label htmlFor="password" className="block text-sm font-medium text-gray-700">
-          {isEditing ? 'Password (leave blank to keep current)' : 'Password'}
-        </label>
-        <input
-          id="password"
-          type="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          required={!isEditing}
-          className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-[#191970] focus:border-[#191970]"
-        />
-      </div>
+        <div>
+          <label htmlFor="password" className="block text-sm font-medium text-gray-700">
+            {isEditing ? 'New Password (leave blank to keep current)' : 'Password'}
+          </label>
+          <input
+            id="password"
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-[#191970] focus:border-[#191970]"
+            required={!isEditing}
+            placeholder={isEditing ? '••••••••' : 'Create password'}
+          />
+        </div>
 
-      <div>
-        <label htmlFor="role" className="block text-sm font-medium text-gray-700">
-          Role
-        </label>
-        <select
-          id="role"
-          value={role}
-          onChange={(e) => setRole(e.target.value)}
-          className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-[#191970] focus:border-[#191970]"
-        >
-          <option value="editor">Editor</option>
-          <option value="superuser">Superuser</option>
-        </select>
+        <div>
+          <label htmlFor="role" className="block text-sm font-medium text-gray-700">
+            Role
+          </label>
+          <select
+            id="role"
+            value={role}
+            onChange={(e) => setRole(e.target.value)}
+            className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-[#191970] focus:border-[#191970]"
+          >
+            {availableRoles.map((roleOption) => (
+              <option key={roleOption} value={roleOption}>
+                {roleOption.charAt(0).toUpperCase() + roleOption.slice(1)} - {ROLE_DESCRIPTIONS[roleOption]}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
 
       <div className="flex justify-end space-x-3">

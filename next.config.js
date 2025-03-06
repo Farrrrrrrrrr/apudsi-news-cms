@@ -41,9 +41,7 @@ const nextConfig = {
         destination: '/api/:path*',
       },
     ]
-  },
-  // Transpile next-auth for proper usage
-  transpilePackages: ['next-auth']
+  }
 };
 
-module.exports = nextConfig;
+export default nextConfig;
